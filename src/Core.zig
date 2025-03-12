@@ -207,6 +207,7 @@ pub fn initWindow(core: *Core, window_id: mach.ObjectID) !void {
     core_window.swap_chain = core_window.device.createSwapChain(core_window.surface, &core_window.swap_chain_descriptor);
     try core_window.frame.start();
     core.pushEvent(.{ .window_open = .{ .window_id = window_id } });
+    std.log.debug("core: window initialized", .{});
 }
 
 pub fn tick(core: *Core, core_mod: mach.Mod(Core)) !void {

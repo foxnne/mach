@@ -174,16 +174,11 @@ fn initWindow(
     }
 
     const metal_descriptor = try core.allocator.create(gpu.Surface.DescriptorFromMetalLayer);
-    const layer = objc.quartz_core.MetalLayer.new();
-    defer layer.release();
+    var layer = objc.mach.Layer.new();
+
+    //layer.release();
 
     if (core_window.transparent) layer.setOpaque(false);
-
-    metal_descriptor.* = .{
-        .layer = layer,
-    };
-    core_window.surface_descriptor = .{};
-    core_window.surface_descriptor.next_in_chain = .{ .from_metal_layer = metal_descriptor };
 
     const screen = objc.app_kit.Screen.mainScreen();
     const rect = objc.core_graphics.Rect{
@@ -216,11 +211,16 @@ fn initWindow(
 
         native_window.setReleasedWhenClosed(false);
 
-        var view = objc.mach.View.allocInit();
-
         // initWithFrame is overridden in our MACHView, which creates a tracking area for mouse tracking
+        var view = objc.mach.View.alloc();
         view = view.initWithFrame(rect);
-        view.setLayer(@ptrCast(layer));
+        //view.setLayer(@ptrCast(layer));
+
+        metal_descriptor.* = .{
+            .layer = view.layer(),
+        };
+        core_window.surface_descriptor = .{};
+        core_window.surface_descriptor.next_in_chain = .{ .from_metal_layer = metal_descriptor };
 
         // TODO(core): free this allocation
 
@@ -232,6 +232,14 @@ fn initWindow(
                 null,
             );
             view.setBlock_render(render.asBlock().copy());
+
+            var windowDidResize = objc.foundation.stackBlockLiteral(
+                WindowDelegateCallbacks.windowDidResize,
+                context,
+                null,
+                null,
+            );
+            view.setBlock_windowDidResize(windowDidResize.asBlock().copy());
 
             var keyDown = objc.foundation.stackBlockLiteral(
                 ViewCallbacks.keyDown,
@@ -347,31 +355,13 @@ fn initWindow(
 
         // Set core_window.native, which we use to check if a window is initialized
         // Then call core.initWindow to finish initializing the window
-        core_window.native = .{ .window = native_window, .view = view };
+        core_window.native = .{
+            .window = native_window,
+            .view = view,
+        };
         core.windows.setValueRaw(window_id, core_window);
         try core.initWindow(window_id);
     } else std.debug.panic("mach: window failed to initialize", .{});
-}
-
-pub fn waitEventTimeout(seconds: f64) !void {
-    if (seconds > 0.0) {
-        const ns_app = objc.app_kit.Application.sharedApplication();
-
-        const expiration_date = objc.app_kit.Date.dateWithTimeIntervalSinceNow(seconds);
-
-        // For some reason, no matter what I seem to do no events are ever fired here
-        // and it never returns before the expiration date. It also seems to interfere with the DVDisplayLink
-        // callback (render).
-
-        if (ns_app.nextEventMatchingMask_untilDate_inMode_dequeue(
-            objc.app_kit.EventMaskAny,
-            expiration_date,
-            objc.app_kit.NSDefaultRunLoopMode,
-            true,
-        )) |_| {
-            std.log.debug("event!", .{});
-        }
-    }
 }
 
 const WindowDelegateCallbacks = struct {

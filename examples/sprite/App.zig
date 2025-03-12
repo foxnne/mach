@@ -24,7 +24,7 @@ pub const Modules = mach.Modules(.{
 
 pub const mach_module = .app;
 
-pub const mach_systems = .{ .main, .init, .tick, .deinit };
+pub const mach_systems = .{ .main, .init, .tick, .render, .deinit };
 
 pub const main = mach.schedule(.{
     .{ mach.Core, .init },
@@ -57,6 +57,7 @@ pub fn init(
 
     const window = try core.windows.new(.{
         .title = "gfx.Sprite",
+        .on_tick = app_mod.id.render,
     });
 
     // TODO(allocator): find a better way to get an allocator here
@@ -101,10 +102,7 @@ pub fn tick(
     core: *mach.Core,
     app: *App,
     sprite: *gfx.Sprite,
-    sprite_mod: mach.Mod(gfx.Sprite),
 ) !void {
-    const label = @tagName(mach_module) ++ ".tick";
-
     var direction = app.direction;
     var spawning = app.spawning;
     while (core.nextEvent()) |event| {
@@ -116,6 +114,11 @@ pub fn tick(
                     .up => direction.v[1] += 1,
                     .down => direction.v[1] -= 1,
                     .space => spawning = true,
+                    .t => {
+                        const window = core.windows.getValue(app.window);
+                        const texture = try loadTextureT(window.device, window.queue, app.allocator);
+                        texture.release();
+                    },
                     else => {},
                 }
             },
@@ -159,6 +162,7 @@ pub fn tick(
 
     // Multiply by delta_time to ensure that movement is the same speed regardless of the frame rate.
     const delta_time = app.timer.lap();
+    app.time += delta_time;
 
     // Rotate all sprites in the pipeline.
     var pipeline_children = try sprite.pipelines.getChildren(app.pipeline_id);
@@ -182,44 +186,6 @@ pub fn tick(
     player_pos.v[1] += direction.y() * speed * delta_time;
     sprite.objects.set(app.player_id, .transform, Mat4x4.translate(player_pos));
 
-    const window = core.windows.getValue(app.window);
-
-    // Grab the back buffer of the swapchain
-    // TODO(Core)
-    const back_buffer_view = window.swap_chain.getCurrentTextureView().?;
-    defer back_buffer_view.release();
-
-    // Create a command encoder
-    const encoder = window.device.createCommandEncoder(&.{ .label = label });
-    defer encoder.release();
-
-    // Begin render pass
-    const sky_blue = gpu.Color{ .r = 0.776, .g = 0.988, .b = 1, .a = 1 };
-    const color_attachments = [_]gpu.RenderPassColorAttachment{.{
-        .view = back_buffer_view,
-        .clear_value = sky_blue,
-        .load_op = .clear,
-        .store_op = .store,
-    }};
-    const render_pass = encoder.beginRenderPass(&gpu.RenderPassDescriptor.init(.{
-        .label = label,
-        .color_attachments = &color_attachments,
-    }));
-
-    // Render sprites
-    sprite.pipelines.set(app.pipeline_id, .render_pass, render_pass);
-    sprite_mod.call(.tick);
-
-    // Finish render pass
-    render_pass.end();
-    var command = encoder.finish(&.{ .label = label });
-    window.queue.submit(&[_]*gpu.CommandBuffer{command});
-    command.release();
-    render_pass.release();
-
-    app.frame_count += 1;
-    app.time += delta_time;
-
     // TODO(object): window-title
     // // Every second, update the window title with the FPS
     // if (app.fps_timer.read() >= 1.0) {
@@ -234,12 +200,110 @@ pub fn tick(
     // }
 }
 
+pub fn render(
+    core: *mach.Core,
+    app: *App,
+    sprite: *gfx.Sprite,
+    sprite_mod: mach.Mod(gfx.Sprite),
+) !void {
+    std.log.debug("render", .{});
+    const label = @tagName(mach_module) ++ ".render";
+
+    const window = core.windows.getValue(app.window);
+
+    // Grab the back buffer of the swapchain
+    // TODO(Core)
+    if (window.swap_chain.getCurrentTextureView()) |back_buffer_view| {
+        defer back_buffer_view.release();
+
+        // Create a command encoder
+        const encoder = window.device.createCommandEncoder(&.{ .label = label });
+        defer encoder.release();
+
+        // Begin render pass
+        const sky_blue = gpu.Color{ .r = 0.776, .g = 0.988, .b = 1, .a = 1 };
+        const color_attachments = [_]gpu.RenderPassColorAttachment{.{
+            .view = back_buffer_view,
+            .clear_value = sky_blue,
+            .load_op = .clear,
+            .store_op = .store,
+        }};
+        const render_pass = encoder.beginRenderPass(&gpu.RenderPassDescriptor.init(.{
+            .label = label,
+            .color_attachments = &color_attachments,
+        }));
+
+        // Render sprites
+        sprite.pipelines.set(app.pipeline_id, .render_pass, render_pass);
+        sprite_mod.call(.tick);
+
+        // Finish render pass
+        render_pass.end();
+        var command = encoder.finish(&.{ .label = label });
+        window.queue.submit(&[_]*gpu.CommandBuffer{command});
+        command.release();
+        render_pass.release();
+
+        app.frame_count += 1;
+
+        mach.sysgpu.Impl.deviceTick(window.device);
+
+        window.swap_chain.present();
+
+        // TODO(object): window-title
+        // // Every second, update the window title with the FPS
+        // if (app.fps_timer.read() >= 1.0) {
+        //     try core.printTitle(
+        //         core.main_window,
+        //         "sprite [ FPS: {d} ] [ Sprites: {d} ]",
+        //         .{ app.frame_count, app.sprites },
+        //     );
+        //     core.schedule(.update);
+        //     app.fps_timer.reset();
+        //     app.frame_count = 0;
+        // }
+    }
+}
+
 pub fn deinit(
     app: *App,
     sprite: *gfx.Sprite,
 ) void {
     // Cleanup here, if desired.
     sprite.objects.delete(app.player_id);
+}
+
+fn loadTextureT(device: *gpu.Device, queue: *gpu.Queue, allocator: std.mem.Allocator) !*gpu.Texture {
+    // Load the image from memory
+    var img = try zigimg.Image.fromFilePath(allocator, "../../../../pixelart/pixelart.png");
+    defer img.deinit();
+    const img_size = gpu.Extent3D{ .width = @as(u32, @intCast(img.width)), .height = @as(u32, @intCast(img.height)) };
+
+    // Create a GPU texture
+    const label = @tagName(mach_module) ++ ".loadTexture";
+    const texture = device.createTexture(&.{
+        .label = label,
+        .size = img_size,
+        .format = .rgba8_unorm,
+        .usage = .{
+            .texture_binding = true,
+            .copy_dst = true,
+        },
+    });
+    const data_layout = gpu.Texture.DataLayout{
+        .bytes_per_row = @as(u32, @intCast(img.width * 4)),
+        .rows_per_image = @as(u32, @intCast(img.height)),
+    };
+    switch (img.pixels) {
+        .rgba32 => |pixels| queue.writeTexture(&.{ .texture = texture }, &data_layout, &img_size, pixels),
+        .rgb24 => |pixels| {
+            const data = try rgb24ToRgba32(allocator, pixels);
+            defer data.deinit(allocator);
+            queue.writeTexture(&.{ .texture = texture }, &data_layout, &img_size, data.rgba32);
+        },
+        else => @panic("unsupported image color format"),
+    }
+    return texture;
 }
 
 // TODO(sprite): don't require users to copy / write this helper themselves

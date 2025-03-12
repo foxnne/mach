@@ -23,10 +23,10 @@
             .lazy = true,
         },
         .mach_objc = .{
-            //.path = "../mach-objc-dev",
-            .url = "https://github.com/foxnne/mach-objc/archive/4a704d093d4215ba72e34dd2fcba91025bdcd797.tar.gz",
-            .hash = "1220e2edade45c87f896ab2dc5ef3ddcbe60a4b50a2e143b5f98bf4371fd7315d138",
-            //.hash = "12203675829014e69be2ea7c126ecf25d403009d336b7ca5f6e7c4ccede826c8e597",
+            //.path = "../mach-objc-dev/",
+            .url = "https://github.com/foxnne/mach-objc/archive/0cebc6c432d44f7b1ce895ddf59b84e463e4a8e0.tar.gz",
+            .hash = "1220e062495016574801e766ce7f46a9b67debdcace638f6272e673f2c0e2c5a8540",
+            // .hash = "12209b58da80f48dd26ec2c066660352f70b8652c213647c70557577e74cf38d6639",
             .lazy = true,
         },
         .xcode_frameworks = .{

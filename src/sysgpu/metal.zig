@@ -4,6 +4,7 @@ const cg = @import("objc").core_graphics;
 const mtl = @import("objc").metal;
 const objc = @import("objc").objc;
 const ns = @import("objc").foundation;
+const mach = @import("objc").mach;
 const sysgpu = @import("sysgpu/main.zig");
 const limits = @import("limits.zig");
 const utils = @import("utils.zig");
@@ -131,7 +132,7 @@ pub const Adapter = struct {
 
 pub const Surface = struct {
     manager: utils.Manager(Surface) = .{},
-    layer: *ca.MetalLayer,
+    layer: *mach.Layer,
 
     pub fn init(instance: *Instance, desc: *const sysgpu.Surface.Descriptor) !*Surface {
         _ = instance;
@@ -433,7 +434,7 @@ pub const SwapChain = struct {
     manager: utils.Manager(SwapChain) = .{},
     device: *Device,
     surface: *Surface,
-    current_drawable: ?*ca.MetalDrawable = null,
+    //current_drawable: ?*ca.MetalDrawable = null,
 
     pub fn init(device: *Device, surface: *Surface, desc: *const sysgpu.SwapChain.Descriptor) !*SwapChain {
         const layer = surface.layer;
@@ -443,8 +444,8 @@ pub const SwapChain = struct {
         layer.setPixelFormat(conv.metalPixelFormat(desc.format));
         layer.setFramebufferOnly(!(desc.usage.storage_binding or desc.usage.render_attachment));
         layer.setDrawableSize(size);
-        layer.setMaximumDrawableCount(if (desc.present_mode == .mailbox) 3 else 2);
-        layer.setDisplaySyncEnabled(desc.present_mode != .immediate);
+        //layer.setMaximumDrawableCount(if (desc.present_mode == .mailbox) 3 else 2);
+        layer.setDisplaySyncEnabled(false);
 
         const swapchain = try allocator.create(SwapChain);
         swapchain.* = .{ .device = device, .surface = surface };
@@ -452,25 +453,21 @@ pub const SwapChain = struct {
     }
 
     pub fn deinit(swapchain: *SwapChain) void {
-        if (swapchain.current_drawable) |drawable| drawable.release();
         allocator.destroy(swapchain);
     }
 
-    pub fn getCurrentTextureView(swapchain: *SwapChain) !*TextureView {
+    pub fn getCurrentTextureView(swapchain: *SwapChain) !?*TextureView {
         const pool = objc.autoreleasePoolPush();
         defer objc.autoreleasePoolPop(pool);
 
-        if (swapchain.current_drawable) |drawable| drawable.release();
-
-        swapchain.current_drawable = swapchain.surface.layer.nextDrawable();
+        // if (swapchain.current_drawable) |drawable| drawable.release();
 
         swapchain.device.processQueuedOperations();
 
-        if (swapchain.current_drawable) |drawable| {
-            _ = drawable.retain();
+        if (swapchain.surface.layer.currentDrawable()) |drawable| {
             return TextureView.initFromMtlTexture(drawable.texture());
         } else {
-            std.debug.panic("getCurrentTextureView no drawable", .{});
+            return null;
         }
     }
 
@@ -478,7 +475,7 @@ pub const SwapChain = struct {
         const pool = objc.autoreleasePoolPush();
         defer objc.autoreleasePoolPop(pool);
 
-        if (swapchain.current_drawable) |drawable| {
+        if (swapchain.surface.layer.currentDrawable()) |drawable| {
             const queue = try swapchain.device.getQueue();
             const command_buffer: *mtl.CommandBuffer = queue.command_queue.commandBuffer() orelse {
                 return error.NewCommandBufferFailed;
@@ -488,7 +485,8 @@ pub const SwapChain = struct {
                 command_buffer.commit();
                 drawable.present();
             } else {
-                command_buffer.presentDrawable(@ptrCast(drawable));
+                drawable.present();
+                //command_buffer.presentDrawable(@ptrCast(drawable));
                 command_buffer.commit();
             }
         }
